@@ -11,6 +11,7 @@ const beerStyles = [
   "weiss",
   "neipa",
   "saison",
+  "choco-mint",
 ];
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -22,17 +23,26 @@ const octokit = GITHUB_TOKEN ? new Octokit({ auth: GITHUB_TOKEN }) : null;
 
 // Helper para parsear líneas del markdown
 const parseLine = (line: string) => {
-  // Formato: - **hash** [tap] alias: "message" _(date)_
-  const regex = /^- \*\*([a-zA-Z0-9]+)\*\* \[([^\]]+)\] ([^:]+): "([^"]+)" _\(([^)]+)\)_/;
+  // Regex actualizado para soportar (pending) opcional
+  // Grupo 1: hash
+  // Grupo 2: tap
+  // Grupo 3: (pending) (puede ser undefined)
+  // Grupo 4: alias
+  // Grupo 5: message
+  // Grupo 6: date
+  const regex = /^- \*\*([a-zA-Z0-9]+)\*\* \[([^\]]+)\] (\(pending\) )?([^:]+): "([^"]+)" _\(([^)]+)\)_/;
   const match = line.match(regex);
   if (!match) return null;
+  
+  const isPending = !!match[3]; // Si existe el grupo 3, es pendiente
+
   return {
     hash: match[1],
     tap: match[2],
-    alias: match[3],
-    message: match[4],
-    createdAt: match[5],
-    status: "approved", // Asumimos approved si está en el archivo
+    alias: match[4],
+    message: match[5],
+    createdAt: match[6],
+    status: isPending ? "pending" : "approved",
     bubbleX: Math.random() * 80 + 10,
     bubbleDelay: Math.random() * 3,
   };
@@ -93,7 +103,7 @@ export async function POST(request: Request) {
   const createdAt = new Date().toISOString();
 
   let hash = crypto.randomUUID().replace(/-/g, "").slice(0, 7);
-  let status = "pending"; // Por defecto pending si falla git
+  const status = "pending"; 
 
   if (octokit && GITHUB_OWNER && GITHUB_REPO) {
     try {
@@ -118,15 +128,15 @@ export async function POST(request: Request) {
         content = "# Last Commit Log\n\nRegistro de commits cerveceros.\n\n";
       }
 
-      // Al guardar, lo marcamos como "approved" implícitamente al estar en el archivo
-      const logEntry = `- **${hash}** [${tap}] ${alias}: "${message}" _(${createdAt})_\n`;
+      // Guardamos con (pending)
+      const logEntry = `- **${hash}** [${tap}] (pending) ${alias}: "${message}" _(${createdAt})_\n`;
       const newContent = content + logEntry;
 
       const commitResult = await octokit.rest.repos.createOrUpdateFileContents({
         owner: GITHUB_OWNER,
         repo: GITHUB_REPO,
         path: LOG_FILE_PATH,
-        message: `feat(log): nuevo brindis de ${alias}`,
+        message: `feat(log): nuevo brindis pendiente de ${alias}`,
         content: Buffer.from(newContent).toString("base64"),
         sha: fileSha,
         committer: { name: "Last Commit Bot", email: "bot@azulmalta.com" },
@@ -135,7 +145,7 @@ export async function POST(request: Request) {
 
       if (commitResult.data.commit.sha) {
         hash = commitResult.data.commit.sha.slice(0, 7);
-        status = "approved"; // Si se guardó en GitHub, está aprobado
+        // Status sigue siendo pending hasta que se apruebe
       }
     } catch (error) {
       console.error("Error committing to GitHub:", error);

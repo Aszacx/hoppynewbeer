@@ -92,55 +92,60 @@ a {
 }
 
 .retro-window {
-  border: 1px solid #1d2b1d;
-  box-shadow: 0 0 0 1px rgba(143, 217, 104, 0.1),
-    0 20px 60px rgba(0, 0, 0, 0.7);
-  background: #000;
+  border: 1px solid #333;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+  background: #0d1117;
+  border-radius: 12px;
 }
 
 .window-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  background: #000;
-  border-bottom: 1px solid #1d2b1d;
+  justify-content: center;
+  position: relative;
+  padding: 10px 16px;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  border-radius: 12px 12px 0 0;
 }
 
 .window-header .title {
   display: flex;
   align-items: center;
   gap: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0;
-  color: #cfeec7;
-  font-size: 14px;
-  font-family: var(--font-vt323), "IBM VGA 8x16", monospace;
+  color: #c9d1d9;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-weight: 500;
 }
 
-.leds {
+.traffic-lights {
   display: flex;
   align-items: center;
   gap: 8px;
-  opacity: 0.7;
+  position: absolute;
+  left: 16px;
 }
 
-.led {
-  width: 8px;
-  height: 8px;
-  border-radius: 1px;
-  box-shadow: none;
-  background: #1d2b1d;
+.traffic-light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
-.led.ok {
-  background: #8fd968;
-  box-shadow: 0 0 5px rgba(143, 217, 104, 0.4);
+.traffic-light.close {
+  background: #ff5f56;
+  border: 1px solid #e0443e;
 }
 
-.led.warn {
-  background: #f5d061;
+.traffic-light.minimize {
+  background: #ffbd2e;
+  border: 1px solid #dea123;
+}
+
+.traffic-light.maximize {
+  background: #27c93f;
+  border: 1px solid #1aab29;
 }
 
 .window-footer {
@@ -334,24 +339,62 @@ a {
 }
 
 .bubble-float {
-  animation: float 6s ease-in-out infinite;
-  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.08) 55%),
-    linear-gradient(145deg, rgba(143, 217, 104, 0.7), rgba(90, 140, 60, 0.7));
+  /* Eliminamos la animación CSS fija para controlarla con JS o física ligera */
+  position: absolute;
+  cursor: grab;
+  user-select: none;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.05) 60%),
+    rgba(143, 217, 104, 0.15);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   box-shadow:
-    0 10px 30px rgba(0, 0, 0, 0.35),
-    inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+    inset 0 0 20px rgba(255, 255, 255, 0.1),
+    0 10px 20px rgba(0, 0, 0, 0.2);
+  border-radius: 50%; /* Completamente redonda para parecer burbuja */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  transition: transform 0.1s ease-out, box-shadow 0.2s;
+  padding: 20px;
+  width: 140px;
+  height: 140px;
 }
 
-@keyframes float {
-  0% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-14px);
-  }
-  100% {
-    transform: translateY(0px);
-  }
+.bubble-float:active {
+  cursor: grabbing;
+  transform: scale(1.05);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+}
+
+.bubble-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.bubble-message {
+  font-size: 11px;
+  line-height: 1.3;
+  color: #fff;
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+.bubble-alias {
+  font-size: 10px;
+  font-weight: bold;
+  color: #a3e635; /* Un verde más claro */
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
 }
 
 @keyframes foamRise {

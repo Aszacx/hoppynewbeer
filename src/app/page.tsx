@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 
 type LogTone = "default" | "success" | "error" | "muted";
 
@@ -27,23 +28,24 @@ type CommitEntry = {
 const initialLogs: LogEntry[] = [
   {
     id: 1,
-    output: "🍺 Last Commit // Azul Malta\nConsola vintage para tu último commit cervecero.",
-    tone: "success",
+    output: "Last login: " + new Date().toDateString() + " on console\nWelcome to Choco-Mint Commit terminal.",
+    tone: "default",
   },
   {
     id: 2,
     output:
-      "Escribe `help` para ver comandos. Ej: brew commit \"mensaje\" --alias tu_nombre --beer ipa",
+      "Closing the year? Reviewing the brew? Commit your thoughts.\nRun `brew commit \"message\" --alias name` to leave your mark.",
     tone: "muted",
   },
 ];
 
 const commandHelp = [
-  "brew commit \"mensaje\" --alias tu_nombre --beer ipa|stout|lager",
+  "brew commit \"message\" --alias tu_nombre",
   "tap log               # muestra los últimos commits",
   "tap status            # resumen de pendientes/aprobados",
   "tap review            # ver pendientes",
-  "tap approve <hash>    # aprobar un commit",
+  "tap approve <hash> <secret> # aprobar un commit (admin)",
+  "refill                # reiniciar animación de burbujas",
   "clear                 # limpia la consola",
   "about                 # info del proyecto",
 ];
@@ -54,6 +56,7 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [bubblesKey, setBubblesKey] = useState(0);
   const consoleEndRef = useRef<HTMLDivElement | null>(null);
   const idRef = useRef<number>(initialLogs.length);
 
@@ -67,6 +70,16 @@ export default function Home() {
   }, [logs]);
 
   useEffect(() => {
+    // Cargar commits iniciales
+    fetch("/api/commit")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setCommits(data);
+        }
+      })
+      .catch(() => {});
+      
     const timeout = setTimeout(() => setIsLoading(false), 1400);
     return () => clearTimeout(timeout);
   }, []);
@@ -84,13 +97,22 @@ export default function Home() {
   };
 
   const processCommand = async (command: string) => {
-    const prompt = `last@azulmalta:~$ ${command}`;
+    const prompt = `root@azulmalta:~$ ${command}`;
     appendLog({ prompt, output: "", tone: "muted" });
 
     const lower = command.toLowerCase();
 
     if (lower === "clear") {
       setLogs(initialLogs);
+      return;
+    }
+
+    if (lower === "refill" || lower === "pour again") {
+      setBubblesKey((prev) => prev + 1);
+      appendLog({
+        output: "🍺 Sirviendo otra ronda de burbujas...",
+        tone: "success",
+      });
       return;
     }
 
@@ -138,10 +160,7 @@ export default function Home() {
       }
       const summary = commits
         .slice(0, 6)
-        .map(
-          (c) =>
-            `• ${c.hash} [${c.tap}] ${c.alias}: "${c.message}" (${c.status})`,
-        )
+        .map((c) => `• ${c.hash} [${c.tap}] ${c.alias} (${c.status})`)
         .join("\n");
       appendLog({ output: summary, tone: "default" });
       return;
@@ -154,39 +173,70 @@ export default function Home() {
         return;
       }
       const list = pending
-        .map((c) => `• ${c.hash} ${c.alias}: "${c.message}" [${c.tap}]`)
+        .map((c) => `• ${c.hash} ${c.alias} [${c.tap}] (En moderación)`)
         .join("\n");
       appendLog({ output: `Pendientes:\n${list}`, tone: "muted" });
       return;
     }
 
-    const approveMatch = command.match(/^tap\s+approve\s+([a-zA-Z0-9]+)/i);
+    const approveMatch = command.match(/^tap\s+approve\s+([a-zA-Z0-9]+)(?:\s+(.+))?/i);
     if (approveMatch) {
       const hash = approveMatch[1];
-      let found = false;
-      setCommits((prev) =>
-        prev.map((c) => {
-          if (c.hash === hash) {
-            found = true;
-            return { ...c, status: "approved" };
-          }
-          return c;
-        }),
-      );
-      appendLog({
-        output: found ? `Commit ${hash} aprobado.` : `No encontré ${hash}.`,
-        tone: found ? "success" : "error",
-      });
+      const secret = approveMatch[2]; // Capturar el secreto si se pasa inline
+
+      if (!secret) {
+        appendLog({
+          output: `⚠️ Se requiere secreto de administrador.\nUso: tap approve ${hash} <tu_secreto>`,
+          tone: "error",
+        });
+        return;
+      }
+
+      setIsProcessing(true);
+      try {
+        const response = await fetch("/api/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ hash, secret }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+          setCommits((prev) =>
+            prev.map((c) =>
+              c.hash === hash ? { ...c, status: "approved" } : c,
+            ),
+          );
+          appendLog({
+            output: `✅ Commit ${hash} aprobado y publicado exitosamente.`,
+            tone: "success",
+          });
+        } else {
+          appendLog({
+            output: `❌ Error: ${data.error || "No se pudo aprobar."}`,
+            tone: "error",
+          });
+        }
+      } catch {
+        appendLog({
+          output: "Error de conexión al intentar aprobar.",
+          tone: "error",
+        });
+      } finally {
+        setIsProcessing(false);
+      }
       return;
     }
 
     const commitMatch = command.match(
-      /^brew\s+commit\s+"([^"]+)"(?:\s+--alias\s+([^\s]+))?(?:\s+--beer\s+([^\s]+))?/i,
+      /^brew\s+commit\s+"([^"]+)"(?:\s+--alias\s+([^\s]+))?/i,
     );
 
     if (commitMatch) {
-      const [, message, alias, beer] = commitMatch;
-      await runCommitCommand({ message, alias, beer });
+      const [, message, alias] = commitMatch;
+      // Fixed beer style for Choco-Mint Commit
+      await runCommitCommand({ message, alias, beer: "choco-mint" });
       return;
     }
 
@@ -242,7 +292,7 @@ export default function Home() {
       setCommits((prev) => [newCommit, ...prev].slice(0, 50));
 
       appendLog({
-        output: `commit ${newCommit.hash} (${newCommit.tap}) por ${newCommit.alias}\n"${newCommit.message}"\n→ En revisión. Usa 'tap approve ${newCommit.hash}' para publicarlo.`,
+        output: `commit ${newCommit.hash} en revisión. Usa 'tap approve ${newCommit.hash} <secret>' para publicarlo.`,
         tone: "muted",
       });
     } catch {
@@ -281,71 +331,105 @@ export default function Home() {
 
       <div className="relative w-full max-w-5xl overflow-hidden rounded-lg retro-window backdrop-blur crt-mask">
         <div className="window-header">
-          <div className="title">
-            <span>Last Commit OS</span>
+          <div className="traffic-lights">
+            <span className="traffic-light close" />
+            <span className="traffic-light minimize" />
+            <span className="traffic-light maximize" />
           </div>
-          <div className="leds">
-            <span className="led ok" />
-            <span className="led warn" />
+          <div className="title">
+            <span>root@azulmalta: ~</span>
           </div>
         </div>
 
-        <div className="pointer-events-none absolute inset-0">
-          {commits
-            .filter((c) => c.status === "approved")
-            .slice(0, 12)
-            .map((c) => (
-              <div
-                key={c.hash}
-                className="bubble-float absolute flex max-w-[220px] flex-col gap-1 rounded-full px-4 py-3 text-xs text-green-50/90"
-                style={{
-                  left: `${c.bubbleX ?? 10}%`,
-                  top: `${10 + Math.random() * 70}%`,
-                  animationDelay: `${c.bubbleDelay ?? 0}s`,
-                }}
-              >
-                <span className="text-[10px] uppercase tracking-[0.25em] text-green-200/70">
-                  {c.tap}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {commits
+          .filter((c) => c.status === "approved")
+          .map((c, i) => (
+            <motion.div
+              key={`${c.hash}-${bubblesKey}`}
+              drag
+              whileHover={{ scale: 1.1, zIndex: 50 }}
+              whileTap={{ scale: 0.95 }}
+              initial={{ y: 600, opacity: 0 }}
+              animate={{
+                y: -600,
+                opacity: [0, 1, 1, 0],
+              }}
+              transition={{
+                duration: 15 + Math.random() * 10,
+                ease: "linear",
+                delay: i * 2,
+                repeat: Infinity,
+                repeatDelay: Math.random() * 3,
+              }}
+              className="bubble-float pointer-events-auto"
+              style={{
+                left: `${c.bubbleX ?? 10}%`,
+                // Eliminamos top dinámico para controlar todo con y
+                top: 0, 
+              }}
+            >
+              <div className="bubble-content">
+                <span className="bubble-message" title={c.message}>
+                  &quot;{c.message}&quot;
                 </span>
-                <span className="font-semibold text-green-50">{c.alias}</span>
-                <span className="text-green-100/80 italic">&quot;{c.message}&quot;</span>
+                <span className="bubble-alias">- {c.alias}</span>
               </div>
-            ))}
-        </div>
+            </motion.div>
+          ))}
+      </div>
         <div className="flex flex-col p-0">
-          <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-6 sm:p-8 border-b border-green-900/30">
-            <div className="flex items-center gap-4">
-              <div className="relative h-12 w-12 overflow-hidden rounded-md border border-green-800/60 bg-black/60">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-6 sm:p-8 border-b border-green-900/30 relative overflow-hidden">
+            {/* Christmas lights string */}
+            <div className="absolute top-0 left-0 w-full h-3 flex justify-around px-2 pointer-events-none z-10">
+              {Array.from({ length: 20 }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`w-1.5 h-2 rounded-full shadow-[0_0_8px_current] animate-pulse ${
+                    i % 3 === 0
+                      ? "bg-red-500 text-red-500"
+                      : i % 3 === 1
+                        ? "bg-green-400 text-green-400"
+                        : "bg-yellow-300 text-yellow-300"
+                  }`}
+                  style={{ animationDelay: `${i * 0.2}s`, opacity: 0.8 }}
+                />
+              ))}
+            </div>
+
+            <div className="flex items-center gap-4 relative z-20">
+              <div className="relative h-12 w-32 overflow-hidden rounded-md border border-green-800/60 bg-black/60 flex items-center justify-center">
                 <Image
                   src="/logo.png"
-                  alt="Azul Malta"
+                  alt="Azul Malta Logo"
                   fill
                   className="object-contain p-1"
-                  sizes="48px"
+                  sizes="128px"
                   priority
                 />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-green-50 tracking-wide">
-                  AZUL MALTA // LAST COMMIT
+                <h1 className="text-xl font-bold text-green-50 tracking-wide flex items-center gap-2">
+                  AZUL MALTA <span className="text-xs text-red-400">☃</span>
                 </h1>
                 <p className="text-xs text-green-300/60 tracking-wider uppercase">
-                  v1.0.4-rc
+                  v1.0.25
                 </p>
               </div>
             </div>
-            <div className="text-xs text-green-500 font-mono">
-              MEM: 640K OK
+            <div className="text-xs text-green-500 font-mono flex gap-3">
+              <span>MEM: 640K OK</span>
+              <span className="text-red-400">TEMP: -2°C</span>
             </div>
           </header>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <div className="flex w-full items-center gap-3 rounded-none border-b border-green-900/50 bg-[#0a0f0a] px-4 py-3 focus-within:bg-[#0f140f]">
-              <span className="text-green-300">last@azulmalta:~$</span>
+              <span className="text-green-300">root@azulmalta:~$</span>
               <input
                 autoFocus
                 className="w-full bg-transparent text-sm text-green-50 outline-none placeholder:text-green-800/50"
-                placeholder={"brew commit \"mensaje\" --alias tu_nombre --beer ipa"}
+                placeholder={"brew commit \"message\" --alias tu_nombre"}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 disabled={isProcessing}
@@ -358,13 +442,36 @@ export default function Home() {
                 brew
               </button>
             </div>
-            <div className="hidden flex-wrap gap-2 px-4 text-xs text-green-500/80">
-              {/* Hints can be hidden or moved */}
+            <div className="flex flex-wrap gap-2 text-xs text-green-500/80">
+              <span className="rounded-full border border-green-700/50 bg-[#0a0f0a]/70 px-3 py-1">
+                brew commit &quot;message&quot; --alias tu_nombre
+              </span>
+              <span className="rounded-full border border-green-700/50 bg-[#0a0f0a]/70 px-3 py-1">
+                tap log
+              </span>
             </div>
           </form>
 
-          <div className="h-[60vh] w-full overflow-y-auto bg-black p-4 sm:p-6 shadow-inner shadow-black/40">
-            <div className="flex flex-col gap-1 text-sm leading-relaxed font-mono">
+          <div className="h-[60vh] w-full overflow-y-auto bg-black p-4 sm:p-6 shadow-inner shadow-black/40 font-mono text-sm leading-relaxed">
+            {/* Historial de Commits aprobados al inicio (sin mostrar mensajes) */}
+            {commits.filter((c) => c.status === "approved").length > 0 && logs.length <= 2 && (
+               <div className="mb-4 pb-4 border-b border-green-900/30">
+                 <div className="text-green-300/50 mb-2">--- Historial Reciente ---</div>
+                 {commits
+                   .filter((c) => c.status === "approved")
+                   .slice(0, 8)
+                   .map((c) => (
+                   <div key={c.hash} className="text-green-100/80 mb-1">
+                     <span className="text-yellow-500/80">[{c.hash}]</span>{" "}
+                     <span className="text-blue-300/80">({c.tap})</span>{" "}
+                     <span className="text-green-50">{c.alias}</span>
+                   </div>
+                 ))}
+                 <div className="text-green-300/50 mt-2">------------------------</div>
+               </div>
+            )}
+
+            <div className="flex flex-col gap-1">
               {logs.map((entry) => (
                 <div key={entry.id} className="whitespace-pre-wrap break-words">
                   {entry.prompt && (
