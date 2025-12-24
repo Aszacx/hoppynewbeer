@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { Octokit } from "octokit";
+import { promises as fs } from "fs";
+import path from "path";
 
 const beerStyles = [
   "ipa",
@@ -23,14 +25,10 @@ const octokit = GITHUB_TOKEN ? new Octokit({ auth: GITHUB_TOKEN }) : null;
 
 // Helper para parsear líneas del markdown
 const parseLine = (line: string) => {
-  // Regex actualizado para soportar (pending) opcional
-  // Grupo 1: hash
-  // Grupo 2: tap
-  // Grupo 3: (pending) (puede ser undefined)
-  // Grupo 4: alias
-  // Grupo 5: message
-  // Grupo 6: date
-  const regex = /^- \*\*([a-zA-Z0-9]+)\*\* \[([^\]]+)\] (\(pending\) )?([^:]+): "([^"]+)" _\(([^)]+)\)_/;
+  // Regex más flexible: permite alias con símbolos (emoji/colones) y (pending) opcional
+  // Grupos:
+  // 1 hash, 2 tap, 3 pending?, 4 alias (lazy), 5 message, 6 date
+  const regex = /^- \*\*([a-zA-Z0-9]+)\*\* \[([^\]]+)\] (\(pending\) )?(.+?): "([^"]+)" _\(([^)]+)\)_/;
   const match = line.match(regex);
   if (!match) return null;
   
@@ -48,34 +46,55 @@ const parseLine = (line: string) => {
   };
 };
 
-export async function GET() {
-  if (!octokit || !GITHUB_OWNER || !GITHUB_REPO) {
-    return NextResponse.json([]);
-  }
-
+const loadFromFile = async () => {
   try {
-    const { data } = await octokit.rest.repos.getContent({
-      owner: GITHUB_OWNER,
-      repo: GITHUB_REPO,
-      path: LOG_FILE_PATH,
-    });
+    const filePath = path.join(process.cwd(), LOG_FILE_PATH);
+    const content = await fs.readFile(filePath, "utf-8");
+    const lines = content.split("\n").filter((l) => l.startsWith("- **"));
+    return lines
+      .map(parseLine)
+      .filter((c) => c !== null)
+      .reverse();
+  } catch {
+    return [];
+  }
+};
 
-    if ("content" in data && typeof data.content === "string") {
-      const content = Buffer.from(data.content, "base64").toString("utf-8");
-      const lines = content.split("\n").filter((l) => l.startsWith("- **"));
-      const commits = lines
-        .map(parseLine)
-        .filter((c) => c !== null)
-        .reverse();
+export async function GET() {
+  try {
+    let commits: ReturnType<typeof parseLine>[] = [];
 
-      return NextResponse.json(commits);
+    if (octokit && GITHUB_OWNER && GITHUB_REPO) {
+      try {
+        const { data } = await octokit.rest.repos.getContent({
+          owner: GITHUB_OWNER,
+          repo: GITHUB_REPO,
+          path: LOG_FILE_PATH,
+        });
+
+        if ("content" in data && typeof data.content === "string") {
+          const content = Buffer.from(data.content, "base64").toString("utf-8");
+          const lines = content.split("\n").filter((l) => l.startsWith("- **"));
+          commits = lines
+            .map(parseLine)
+            .filter((c) => c !== null)
+            .reverse() as ReturnType<typeof parseLine>[];
+        }
+      } catch (err) {
+        console.error("GitHub fetch failed, using local file", err);
+      }
     }
+
+    if (!commits.length) {
+      commits = (await loadFromFile()) as ReturnType<typeof parseLine>[];
+    }
+
+    return NextResponse.json(commits);
   } catch (error: unknown) {
     console.error("Error fetching commits:", error);
-    return NextResponse.json([]);
+    const localCommits = await loadFromFile();
+    return NextResponse.json(localCommits);
   }
-
-  return NextResponse.json([]);
 }
 
 export async function POST(request: Request) {

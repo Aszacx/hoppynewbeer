@@ -25,22 +25,11 @@ type CommitEntry = {
   bubbleDelay?: number;
 };
 
-const initialLogs: LogEntry[] = [
-  {
-    id: 1,
-    output: "Last login: " + new Date().toDateString() + " on console\nWelcome to Choco-Mint Commit terminal.",
-    tone: "default",
-  },
-  {
-    id: 2,
-    output:
-      "Closing the year? Reviewing the brew? Commit your thoughts.\nRun `brew commit \"message\" --alias name` to leave your mark.",
-    tone: "muted",
-  },
-];
+// Se llenan en cliente para evitar mismatch de SSR (fecha dinámica)
+const initialLogs: LogEntry[] = [];
 
 const commandHelp = [
-  "brew commit \"message\" --alias tu_nombre",
+  "brew commit \"message\" --alias username",
   "tap log               # muestra los últimos commits",
   "tap status            # resumen de pendientes/aprobados",
   "tap review            # ver pendientes",
@@ -57,8 +46,23 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [bubblesKey, setBubblesKey] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  const [hasHydrated, setHasHydrated] = useState(false);
   const consoleEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const idRef = useRef<number>(initialLogs.length);
+
+  const refreshCommits = async () => {
+    try {
+      const res = await fetch("/api/commit");
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setCommits(data);
+      }
+    } catch {
+      // Silent fail; no-op
+    }
+  };
 
   const nextId = () => {
     idRef.current += 1;
@@ -69,20 +73,54 @@ export default function Home() {
     consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
+  // Reinicia animación cuando llegan commits aprobados
   useEffect(() => {
+    if (commits.some((c) => c.status === "approved")) {
+      setBubblesKey((prev) => prev + 1);
+    }
+  }, [commits]);
+
+  useEffect(() => {
+    // Mensajes iniciales en cliente para evitar mismatch de SSR
+    const welcomeLogs: LogEntry[] = [
+      {
+        id: 1,
+        output: `Last login: ${new Date().toDateString()} on console\nWelcome to Choco-Mint Commit terminal.`,
+        tone: "default",
+      },
+      {
+        id: 2,
+        output:
+          "Closing the year? Reviewing the brew? Commit your thoughts.\nRun `brew commit \"message\" --alias username` to leave your mark.",
+        tone: "muted",
+      },
+    ];
+    setLogs(welcomeLogs);
+    idRef.current = welcomeLogs.length;
+    setHasHydrated(true);
+
+    // Detectar ancho para placeholder en mobile
+    const detect = () => setIsMobile(window.innerWidth < 640);
+    detect();
+    window.addEventListener("resize", detect);
+
     // Cargar commits iniciales
-    fetch("/api/commit")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setCommits(data);
-        }
-      })
-      .catch(() => {});
-      
-    const timeout = setTimeout(() => setIsLoading(false), 1400);
-    return () => clearTimeout(timeout);
+    refreshCommits();
+
+    const timeout = setTimeout(() => setIsLoading(false), 2200);
+    return () => {
+      clearTimeout(timeout);
+      window.removeEventListener("resize", detect);
+    };
   }, []);
+
+  // Enfocar input cuando termina el loader o al montar
+  useEffect(() => {
+    if (!isLoading) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      inputRef.current?.focus();
+    }
+  }, [isLoading]);
 
   const appendLog = (entry: Omit<LogEntry, "id">) => {
     setLogs((prev) => [...prev, { id: nextId(), ...entry }]);
@@ -184,6 +222,14 @@ export default function Home() {
       const hash = approveMatch[1];
       const secret = approveMatch[2]; // Capturar el secreto si se pasa inline
 
+      if (!hash || hash.length < 3) {
+        appendLog({
+          output: "Hash inválido. Usa: tap approve <hash> <secret>\nTip: escribe 'help' para más comandos.",
+          tone: "error",
+        });
+        return;
+      }
+
       if (!secret) {
         appendLog({
           output: `⚠️ Se requiere secreto de administrador.\nUso: tap approve ${hash} <tu_secreto>`,
@@ -203,11 +249,8 @@ export default function Home() {
         const data = await response.json();
 
         if (response.ok) {
-          setCommits((prev) =>
-            prev.map((c) =>
-              c.hash === hash ? { ...c, status: "approved" } : c,
-            ),
-          );
+        await refreshCommits();
+        setBubblesKey((prev) => prev + 1);
           appendLog({
             output: `✅ Commit ${hash} aprobado y publicado exitosamente.`,
             tone: "success",
@@ -234,9 +277,40 @@ export default function Home() {
     );
 
     if (commitMatch) {
-      const [, message, alias] = commitMatch;
+      const [, messageRaw, aliasRaw] = commitMatch;
+      const message = (messageRaw || "").trim();
+      const alias = (aliasRaw || "").trim();
+
+      if (!message) {
+        appendLog({
+          output:
+            "Falta el message. Usa: brew commit \"message\" --alias username\nTip: escribe 'help' para más comandos.",
+          tone: "error",
+        });
+        return;
+      }
+
+      if (!alias) {
+        appendLog({
+          output:
+            "Falta el alias. Usa: brew commit \"message\" --alias username\nTip: escribe 'help' para más comandos.",
+          tone: "error",
+        });
+        return;
+      }
+
       // Fixed beer style for Choco-Mint Commit
       await runCommitCommand({ message, alias, beer: "choco-mint" });
+      return;
+    }
+
+    // Si el usuario intentó brew commit pero sin formato válido
+    if (command.toLowerCase().startsWith("brew commit")) {
+      appendLog({
+        output:
+          "Formato inválido. Usa: brew commit \"message\" --alias username\nTip: escribe 'help' para más comandos.",
+        tone: "error",
+      });
       return;
     }
 
@@ -295,6 +369,10 @@ export default function Home() {
         output: `commit ${newCommit.hash} en revisión. Usa 'tap approve ${newCommit.hash} <secret>' para publicarlo.`,
         tone: "muted",
       });
+
+      // Refrescar desde origen para asegurar que el hash mostrado coincida con el archivo remoto
+      await refreshCommits();
+      setBubblesKey((prev) => prev + 1);
     } catch {
       appendLog({
         output: "Fallo la conexión al bar. Intenta de nuevo en unos segundos.",
@@ -320,7 +398,7 @@ export default function Home() {
               </div>
             </div>
             <p className="text-sm uppercase tracking-[0.3em] text-green-200">
-              Llenando el vaso...
+              Pouring the beer...
             </p>
           </div>
         </div>
@@ -328,6 +406,61 @@ export default function Home() {
 
       <div className="absolute inset-0 noise-overlay opacity-80" />
       <div className="absolute inset-0 grid-overlay opacity-70" />
+
+      {hasHydrated && (
+        <div className="absolute inset-0 overflow-hidden z-30">
+          {commits
+            .filter((c) => c.status === "approved")
+            .map((c, i) => {
+              const left = c.bubbleX ?? Math.random() * 85 + 5;
+              const delay = (c.bubbleDelay ?? Math.random() * 2) + i * 0.5;
+              const dur = 18 + Math.random() * 10;
+              return (
+              <motion.div
+                key={`${c.hash}-${bubblesKey}`}
+                whileHover={{ scale: 1.08, zIndex: 50 }}
+                whileTap={{
+                  scale: [1, 1.18, 0.7, 0],
+                  opacity: [1, 1, 0.5, 0],
+                  filter: ["blur(0px)", "blur(1px)", "blur(4px)", "blur(8px)"],
+                  transition: { duration: 0.5, ease: "easeOut" },
+                }}
+                style={{
+                  left: `${left}%`,
+                  top: 0,
+                  pointerEvents: "auto",
+                  touchAction: "none",
+                  willChange: "transform",
+                }}
+                initial={{ y: "110vh", opacity: 0, scale: 1 }}
+                animate={{
+                  y: ["110vh", "-150vh"],
+                  opacity: [0, 1, 1, 0],
+                  scale: 1,
+                }}
+                transition={{
+                  duration: dur,
+                  ease: "linear",
+                  delay,
+                  repeat: Infinity,
+                  repeatType: "loop",
+                  repeatDelay: 0,
+                  y: { times: [0, 1] },
+                  opacity: { times: [0, 0.05, 0.9, 1] },
+                }}
+                className="bubble-float pointer-events-auto"
+              >
+                <div className="bubble-content">
+                  <span className="bubble-message" title={c.message}>
+                    &quot;{c.message}&quot;
+                  </span>
+                  <span className="bubble-alias">- {c.alias}</span>
+                </div>
+              </motion.div>
+              );
+            })}
+        </div>
+      )}
 
       <div className="relative w-full max-w-5xl overflow-hidden rounded-lg retro-window backdrop-blur crt-mask">
         <div className="window-header">
@@ -341,43 +474,6 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {commits
-          .filter((c) => c.status === "approved")
-          .map((c, i) => (
-            <motion.div
-              key={`${c.hash}-${bubblesKey}`}
-              drag
-              whileHover={{ scale: 1.1, zIndex: 50 }}
-              whileTap={{ scale: 0.95 }}
-              initial={{ y: 600, opacity: 0 }}
-              animate={{
-                y: -600,
-                opacity: [0, 1, 1, 0],
-              }}
-              transition={{
-                duration: 15 + Math.random() * 10,
-                ease: "linear",
-                delay: i * 2,
-                repeat: Infinity,
-                repeatDelay: Math.random() * 3,
-              }}
-              className="bubble-float pointer-events-auto"
-              style={{
-                left: `${c.bubbleX ?? 10}%`,
-                // Eliminamos top dinámico para controlar todo con y
-                top: 0, 
-              }}
-            >
-              <div className="bubble-content">
-                <span className="bubble-message" title={c.message}>
-                  &quot;{c.message}&quot;
-                </span>
-                <span className="bubble-alias">- {c.alias}</span>
-              </div>
-            </motion.div>
-          ))}
-      </div>
         <div className="flex flex-col p-0">
           <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-6 sm:p-8 border-b border-green-900/30 relative overflow-hidden">
             {/* Christmas lights string */}
@@ -397,8 +493,8 @@ export default function Home() {
               ))}
             </div>
 
-            <div className="flex items-center gap-4 relative z-20">
-              <div className="relative h-12 w-32 overflow-hidden rounded-md border border-green-800/60 bg-black/60 flex items-center justify-center">
+          <div className="flex items-center gap-4 relative z-20">
+            <div className="relative h-14 w-36 overflow-hidden rounded-md border-2 border-green-500/70 bg-black/60 flex items-center justify-center">
                 <Image
                   src="/logo.png"
                   alt="Azul Malta Logo"
@@ -413,7 +509,7 @@ export default function Home() {
                   AZUL MALTA <span className="text-xs text-red-400">☃</span>
                 </h1>
                 <p className="text-xs text-green-300/60 tracking-wider uppercase">
-                  v1.0.25
+                  v1.0.26
                 </p>
               </div>
             </div>
@@ -428,8 +524,9 @@ export default function Home() {
               <span className="text-green-300">root@azulmalta:~$</span>
               <input
                 autoFocus
+                ref={inputRef}
                 className="w-full bg-transparent text-sm text-green-50 outline-none placeholder:text-green-800/50"
-                placeholder={"brew commit \"message\" --alias tu_nombre"}
+                placeholder={isMobile ? "$" : "brew commit \"message\" --alias username"}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 disabled={isProcessing}
@@ -442,12 +539,16 @@ export default function Home() {
                 brew
               </button>
             </div>
-            <div className="flex flex-wrap gap-2 text-xs text-green-500/80">
-              <span className="rounded-full border border-green-700/50 bg-[#0a0f0a]/70 px-3 py-1">
-                brew commit &quot;message&quot; --alias tu_nombre
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-green-500/80 px-3 py-2">
+              <span className="text-green-400/90 pr-3 uppercase tracking-[0.18em]">Suggested commands:</span>
+              <span className="rounded-full border border-green-700/60 bg-[#0f140f]/80 px-3 py-1">
+                brew commit &quot;message&quot; --alias username
               </span>
-              <span className="rounded-full border border-green-700/50 bg-[#0a0f0a]/70 px-3 py-1">
+              <span className="rounded-full border border-green-700/60 bg-[#0f140f]/80 px-3 py-1">
                 tap log
+              </span>
+              <span className="rounded-full border border-green-700/60 bg-[#0f140f]/80 px-3 py-1">
+                help
               </span>
             </div>
           </form>
