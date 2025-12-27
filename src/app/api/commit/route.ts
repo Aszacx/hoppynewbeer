@@ -3,6 +3,10 @@ import { Octokit } from "octokit";
 import { promises as fs } from "fs";
 import path from "path";
 
+// Aseguramos runtime Node para poder usar fs (fallback local)
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const beerStyles = [
   "ipa",
   "stout",

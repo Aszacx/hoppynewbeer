@@ -54,13 +54,49 @@ export default function Home() {
 
   const refreshCommits = async () => {
     try {
-      const res = await fetch("/api/commit");
+      const res = await fetch("/api/commit", { cache: "no-store" });
       const data = await res.json();
       if (Array.isArray(data)) {
         setCommits(data);
       }
     } catch {
       // Silent fail; no-op
+    }
+  };
+
+  // Fallback en cliente: leer COMMITS.md estático y parsear líneas approved
+  const fallbackLoadLocal = async () => {
+    try {
+      const res = await fetch("/COMMITS.md", { cache: "no-store" });
+      if (!res.ok) return;
+      const text = await res.text();
+      const lines = text.split("\n").filter((l) => l.startsWith("- **"));
+      const parsed = lines
+        .map((line) => {
+          // - **hash** [tap] (pending)? alias: "msg" _(date)_
+          const match = line.match(
+            /^- \*\*([a-zA-Z0-9]+)\*\* \[([^\]]+)\] (\(pending\) )?(.+?): "([^"]+)" _\(([^)]+)\)_/,
+          );
+          if (!match) return null;
+          const isPending = !!match[3];
+          return {
+            hash: match[1],
+            tap: match[2],
+            alias: match[4],
+            message: match[5],
+            createdAt: match[6],
+            status: isPending ? "pending" : "approved",
+            bubbleX: Math.random() * 80 + 10,
+            bubbleDelay: Math.random() * 3,
+          } as CommitEntry;
+        })
+        .filter((c) => c !== null) as CommitEntry[];
+
+      if (parsed.length) {
+        setCommits(parsed.reverse());
+      }
+    } catch {
+      // ignore
     }
   };
 
@@ -104,8 +140,20 @@ export default function Home() {
     detect();
     window.addEventListener("resize", detect);
 
-    // Cargar commits iniciales
-    refreshCommits();
+    // Cargar commits iniciales (sin caché)
+    (async () => {
+      await refreshCommits();
+      // Si no hay approved tras el fetch principal, intenta leer el archivo local
+      setTimeout(async () => {
+        const hasApproved = (c: CommitEntry) => c.status === "approved";
+        setCommits((prev) => {
+          if (!prev.some(hasApproved)) {
+            fallbackLoadLocal();
+          }
+          return prev;
+        });
+      }, 300);
+    })();
 
     const timeout = setTimeout(() => setIsLoading(false), 2200);
     return () => {
@@ -407,62 +455,62 @@ export default function Home() {
       <div className="absolute inset-0 noise-overlay opacity-80" />
       <div className="absolute inset-0 grid-overlay opacity-70" />
 
-      {hasHydrated && (
-        <div className="absolute inset-0 overflow-hidden z-30">
+      {hasHydrated && commits.some((c) => c.status === "approved") && (
+        <div className="fixed inset-0 overflow-hidden pointer-events-none z-30">
           {commits
             .filter((c) => c.status === "approved")
-            .map((c, i) => {
-              const left = c.bubbleX ?? Math.random() * 85 + 5;
-              const delay = (c.bubbleDelay ?? Math.random() * 2) + i * 0.5;
-              const dur = 18 + Math.random() * 10;
+            .map((c) => {
+              const left = Math.random() * 85 + 5;
+              const delay = Math.random() * 2;
+              const dur = 14 + Math.random() * 6;
               return (
-              <motion.div
-                key={`${c.hash}-${bubblesKey}`}
-                whileHover={{ scale: 1.08, zIndex: 50 }}
-                whileTap={{
-                  scale: [1, 1.18, 0.7, 0],
-                  opacity: [1, 1, 0.5, 0],
-                  filter: ["blur(0px)", "blur(1px)", "blur(4px)", "blur(8px)"],
-                  transition: { duration: 0.5, ease: "easeOut" },
-                }}
-                style={{
-                  left: `${left}%`,
-                  top: 0,
-                  pointerEvents: "auto",
-                  touchAction: "none",
-                  willChange: "transform",
-                }}
-                initial={{ y: "110vh", opacity: 0, scale: 1 }}
-                animate={{
-                  y: ["110vh", "-150vh"],
-                  opacity: [0, 1, 1, 0],
-                  scale: 1,
-                }}
-                transition={{
-                  duration: dur,
-                  ease: "linear",
-                  delay,
-                  repeat: Infinity,
-                  repeatType: "loop",
-                  repeatDelay: 0,
-                  y: { times: [0, 1] },
-                  opacity: { times: [0, 0.05, 0.9, 1] },
-                }}
-                className="bubble-float pointer-events-auto"
-              >
-                <div className="bubble-content">
-                  <span className="bubble-message" title={c.message}>
-                    &quot;{c.message}&quot;
-                  </span>
-                  <span className="bubble-alias">- {c.alias}</span>
-                </div>
-              </motion.div>
+                <motion.div
+                  key={`${c.hash}-${bubblesKey}`}
+                  whileHover={{ scale: 1.08, zIndex: 50 }}
+                  whileTap={{
+                    scale: [1, 1.18, 0.7, 0],
+                    opacity: [1, 1, 0.5, 0],
+                    filter: ["blur(0px)", "blur(1px)", "blur(4px)", "blur(8px)"],
+                    transition: { duration: 0.5, ease: "easeOut" },
+                  }}
+                  style={{
+                    left: `${left}%`,
+                    top: 0,
+                    pointerEvents: "auto",
+                    touchAction: "none",
+                    willChange: "transform",
+                  }}
+                  initial={{ y: "110vh", opacity: 0, scale: 1 }}
+                  animate={{
+                    y: ["110vh", "-150vh"],
+                    opacity: [0, 1, 1, 0],
+                    scale: 1,
+                  }}
+                  transition={{
+                    duration: dur,
+                    ease: "linear",
+                    delay,
+                    repeat: Infinity,
+                    repeatType: "loop",
+                    repeatDelay: 0,
+                    y: { times: [0, 1] },
+                    opacity: { times: [0, 0.1, 0.9, 1] },
+                  }}
+                  className="bubble-float pointer-events-auto"
+                >
+                  <div className="bubble-content">
+                    <span className="bubble-message" title={c.message}>
+                      &quot;{c.message}&quot;
+                    </span>
+                    <span className="bubble-alias">- {c.alias}</span>
+                  </div>
+                </motion.div>
               );
             })}
         </div>
       )}
 
-      <div className="relative w-full max-w-5xl overflow-hidden rounded-lg retro-window backdrop-blur crt-mask">
+      <div className="relative z-40 w-full max-w-5xl overflow-hidden rounded-lg retro-window backdrop-blur crt-mask">
         <div className="window-header">
           <div className="traffic-lights">
             <span className="traffic-light close" />
